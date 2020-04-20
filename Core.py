@@ -1,7 +1,8 @@
 import openmdao.api as om
-from Aerodynamics import Aero
-from Structures import Struct
-from Cables import CableDrag, CableSize
+from Aerodynamics import WingAero, DragFunction
+from Structures import Deflections
+from Cables import CableForce, CableDrag, CableSize
+import numpy as np
 import scipy.interpolate as scipl
 
 
@@ -15,27 +16,38 @@ class LiftDeflectionCorrection(om.ExplicitComponent):
         self.add_output('corrected_L')
 
     def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
-        pass
 
-        # TODO: Implement correction of lift based on deflection
+        lFunc = discrete_inputs['lFunc']
+        dnudxFunc = discrete_inputs['dnudxFunc']
+
+        step = 10E-3
+        semispan = 12
+        x = np.arange(0, semispan, step) # Generate array of spanwise stations.
+        L = lFunc(x)
+        dnudx = dnudxFunc(x)
+        inclinationAngles = np.arctan(dnudx)
+        corrected_L = 2*np.trapz(L*np.cos(inclinationAngles), x)
+
+        outputs['corrected_L'] = corrected_L
 
 
-class DragFunction(om.ExplicitComponent):
+class StructuralCycle(om.Group):
 
     def setup(self):
+        # Link the structural components together (deflection, cable stress and cable sizing)
+        deflectionSystem = self.add_subsystem('deflectionSystem', Deflections(),
+                                              promotes_inputs=['lFunc', 'cablePosition', 'cableForce', 'cableHeight'],
+                                              promotes_outputs=['nuFunc', 'dnudxFunc', 'cableStrain'])
+        cableForce = self.add_subsystem('cableForce', CableForce(),
+                                        promotes_inputs=['cableRadius', 'cableStrain'],
+                                        promotes_outputs=['cableForce', 'cableStress'])
+        cableSizing = self.add_subsystem('cableSizing', CableSize(),
+                                         promotes_inputs=['cableForce'],
+                                         promotes_outputs=['cableRadius'])
 
-        self.add_input('D_wing')
-        self.add_input('D_cable')
-
-        self.add_output('D_total')
-
-    def compute(self, inputs, outputs, discrete_inputs=None, discrete_outputs=None):
-
-        D_wing = inputs['D_wing']
-        D_cable = inputs['D_cable']
-
-        D_total = D_wing + D_cable
-        outputs['D_total'] = D_total
+        # Choose an appropriate solver to converge the systems.
+        self.nonlinear_solver = om.NonlinearBlockGS()
+        self.linear_solver = om.LinearBlockGS()
 
 
 class SUHPAFlex(om.Group):
@@ -50,36 +62,38 @@ class SUHPAFlex(om.Group):
         designVars.add_output('ct', 0.4)
         designVars.add_output('cablePosition', 6)  # cablePosition is the point on the spar where the flying wire connects
 
+        # Declaring fixed aircraft parameters
+        parameters = self.add_subsystem('parameters', om.IndepVarComp(), promotes=['*'])
+        parameters.add_output('cableHeight', 1.5)
+        parameters.add_output('angleOfAttack', 4)
+        parameters.add_output('flightSpeed', 8.25)
+        parameters.add_output('airKinematicViscosity', 1.4207E-5)
+        parameters.add_output('airDensity', 1.225)
+
         # Attach analysis components to group.
-        aeroSystem = self.add_subsystem('aeroSystem', Aero(),
-                                        promotes_inputs=['b1', 'b2', 'b3', 'cr', 'ct'],
+        aeroSystem = self.add_subsystem('aeroSystem', WingAero(),
+                                        promotes_inputs=['b1', 'b2', 'b3', 'cr', 'ct', 'flightSpeed', 'angleOfAttack',
+                                                         'airKinematicViscosity', 'airDensity'],
                                         promotes_outputs=['lFunc', 'S', 'L', 'D_wing'])
 
-        # Define the cycle between the cable sizer and the structural analysis (linked by cable radius, cable force)
-        structuralCycle = self.add_subsystem('structCycle', om.Group(), promotes=['*'])
-        structuralCycle.add_subsystem('structSystem', Struct(),
-                                      promotes_inputs= ['lFunc', 'cablePosition', 'cableRadius'],
-                                      promotes_outputs= ['nuFunc', 'dnudxFunc', 'cableForce'])
-        structuralCycle.add_subsystem('cableSizer', CableSize(),
-                                      promotes_inputs= ['cableForce', 'cablePosition'],
-                                      promotes_outputs= ['cableRadius'])
-        structuralCycle.nonlinear_solver = om.NonlinearBlockGS()  # Configure an appropriate solver for the cycle.
-        structuralCycle.set_order(['structSystem', 'cableSizer'])
+        structuralCycle = self.add_subsystem('structCycle', StructuralCycle(),
+                                             promotes_inputs=['lFunc'],
+                                             promotes_outputs=['dnudxFunc'])
 
-        # Attach the rest of the components.
         cableDrag = self.add_subsystem('cableDrag', CableDrag(),
                                        promotes_inputs= ['cableRadius', 'cablePosition'],
                                        promotes_outputs= ['D_cable'])
+
         liftCorrection = self.add_subsystem('liftCorrection', LiftDeflectionCorrection(),
                                             promotes_inputs= ['lFunc', 'dnudxFunc'],
                                             promotes_outputs= ['corrected_L'])
+
         totalDrag = self.add_subsystem('totalDrag', DragFunction(),
                                        promotes_inputs= ['D_wing', 'D_cable'],
                                        promotes_outputs= ['D_total'])
 
         # Set component execution order
-        self.set_order(['designVars', 'aeroSystem', 'structCycle', 'cableDrag', 'liftCorrection', 'totalDrag'])
-
+        self.set_order(['designVars', 'parameters', 'aeroSystem', 'structCycle', 'cableDrag', 'liftCorrection', 'totalDrag'])
 
         # Add constraint functions
         self.add_subsystem('spanConstraint', om.ExecComp('span = 2*( b1 + b2 + b3 )'), promotes=['*'])
@@ -92,7 +106,7 @@ prob.model = SUHPAFlex()
 
 # Configure problem driver
 prob.driver = om.ScipyOptimizeDriver()
-prob.driver.options['optimizer'] = 'SLSQP'
+prob.driver.options['optimizer'] = 'COBYLA'
 prob.driver.options['maxiter'] = 100
 prob.driver.options['tol'] = 1e-8
 
@@ -102,10 +116,10 @@ prob.model.add_design_var('b2', lower=0.5, upper=12)
 prob.model.add_design_var('b3', lower=0.5, upper=12)
 prob.model.add_design_var('cr', lower=0.2, upper=2)
 prob.model.add_design_var('ct', lower=0.2, upper=2)
-prob.model.add_design_var('cablePosition', lower=0.1, upper=11.9)
+prob.model.add_design_var('cablePosition', lower=0.1, upper=11)
 
-prob.model.add_constraint('corrected_L', equals=1.231)
-prob.model.add_constraint('span', equals=24)
+prob.model.add_constraint('corrected_L', lower=1174, upper=1200)
+prob.model.add_constraint('span', lower=23.9, upper=24.1)
 prob.model.add_constraint('rootThickness', lower=0.1)
 prob.model.add_constraint('tipThickness', lower=0.03)
 
@@ -114,22 +128,21 @@ prob.model.add_objective('D_total')
 # Start the optimiser
 prob.setup()
 
-#prob.check_config()
+# prob.check_config()
 
-prob.run_model()
-# prob.run_driver()
-#
-# print("Optimised design variables:")
-# print(prob['b1'])
-# print(prob['b2'])
-# print(prob['b3'])
-# print(prob['cr'])
-# print(prob['ct'])
-# print(prob['cablePosition'])
-#
-# print("Optimised lift, wing drag, cable drag and total drag:")
-# print(prob['corrected_L'])
-# print(prob['D_wing'])
-# print(prob['D_cable'])
-# print(prob['D_total'])
+prob.run_driver()
+
+print("Optimised design variables:")
+print(prob['b1'])
+print(prob['b2'])
+print(prob['b3'])
+print(prob['cr'])
+print(prob['ct'])
+print(prob['cablePosition'])
+
+print("Optimised lift, wing drag, cable drag and total drag:")
+print(prob['corrected_L'])
+print(prob['D_wing'])
+print(prob['D_cable'])
+print(prob['D_total'])
 
