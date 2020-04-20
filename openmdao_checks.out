@@ -1,0 +1,7 @@
+INFO: checking comp_has_no_outputs
+INFO: checking dup_inputs
+INFO: checking missing_recorders
+WARNING: The Problem has no recorder of any kind attached
+INFO: checking out_of_order
+INFO: checking solvers
+INFO: checking system
