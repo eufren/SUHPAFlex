@@ -40,11 +40,6 @@ class DragFunction(om.ExplicitComponent):
 class SUHPAFlex(om.Group):
 
     def setup(self):
-
-        # Choose solvers
-        self.nonlinear_solver = om.NonlinearBlockGS()
-        self.linear_solver = om.ScipyKrylov()
-
         # Declaring design variables
         designVars = self.add_subsystem('designVars', om.IndepVarComp(), promotes=['*'])
         designVars.add_output('b1', 6)  # Default values are current SUHPA design
@@ -54,16 +49,22 @@ class SUHPAFlex(om.Group):
         designVars.add_output('ct', 0.4)
         designVars.add_output('cablePosition', 6)  # cablePosition is the point on the spar where the flying wire connects
 
-        # Attaching analysis components to group
+        # Attach analysis components to group.
         aeroSystem = self.add_subsystem('aeroSystem', Aero(),
                                         promotes_inputs=['b1', 'b2', 'b3', 'cr', 'ct'],
                                         promotes_outputs=['clFunc', 'lFunc', 'S', 'L', 'D_wing'])
-        structSystem = self.add_subsystem('structSystem', Struct(),
-                                          promotes_inputs= ['lFunc', 'cablePosition', 'cableRadius'],
-                                          promotes_outputs= ['nuFunc', 'dnudxFunc', 'cableForce'])
-        cableSizer = self.add_subsystem('cableSizer', CableSize(),
-                                        promotes_inputs= ['cableForce', 'cablePosition'],
-                                        promotes_outputs= ['cableRadius'])
+
+        # Define the cycle between the cable sizer and the structural analysis (linked by cable radius, cable force)
+        structuralCycle = self.add_subsystem('structCycle', om.Group(), promotes=['*'])
+        structuralCycle.add_subsystem('structSystem', Struct(),
+                                      promotes_inputs= ['lFunc', 'cablePosition', 'cableRadius'],
+                                      promotes_outputs= ['nuFunc', 'dnudxFunc', 'cableForce'])
+        structuralCycle.add_subsystem('cableSizer', CableSize(),
+                                      promotes_inputs= ['cableForce', 'cablePosition'],
+                                      promotes_outputs= ['cableRadius'])
+        structuralCycle.nonlinear_solver = om.NonlinearBlockGS()  # Configure an appropriate solver for the cycle.
+
+        # Attach the rest of the components.
         cableDrag = self.add_subsystem('cableDrag', CableDrag(),
                                        promotes_inputs= ['cableRadius', 'cablePosition'],
                                        promotes_outputs= ['D_cable'])
@@ -73,6 +74,8 @@ class SUHPAFlex(om.Group):
         totalDrag = self.add_subsystem('totalDrag', DragFunction(),
                                        promotes_inputs= ['D_wing', 'D_cable'],
                                        promotes_outputs= ['D_total'])
+
+
 
         # Add constraint functions
         self.add_subsystem('spanConstraint', om.ExecComp('span = 2*( b1 + b2 + b3 )'), promotes=['*'])

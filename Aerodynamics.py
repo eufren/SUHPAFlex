@@ -36,7 +36,7 @@ class Aero(om.ExplicitComponent):
         Uinf = 8.25
         nu = 1.4207E-5
 
-        sld = llpm.Solid()
+        sld = llpm.Solid(full_parallel=False)
 
         root_sect = llpm.wing_section(afl=fx76, c=cr, xdisc=20, sweep=0, correction=fx76polar, Re=Uinf * cr / nu)
 
@@ -80,7 +80,6 @@ class Aero(om.ExplicitComponent):
 
         print("Before solve:")
         print(wng.__dir__())
-        print(wng.hascorrection())
         print("-------------")
 
         acft.eulersolve(echo=False)
@@ -88,7 +87,6 @@ class Aero(om.ExplicitComponent):
 
         print("After solve:")
         print(wng.__dir__())
-        print(wng.hascorrection())
         print("-------------")
 
         S = wng.calc_reference()[0]  # Wing area.
