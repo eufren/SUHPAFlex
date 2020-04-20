@@ -2,18 +2,19 @@ import openmdao.api as om
 from Aerodynamics import Aero
 from Structures import Struct
 from Cables import CableDrag, CableSize
+import scipy.interpolate as scipl
 
 
 class LiftDeflectionCorrection(om.ExplicitComponent):
 
     def setup(self):
 
-        self.add_input('lFunc')
-        self.add_input('dnudxFunc')
+        self.add_discrete_input('lFunc', val=lambda x: x)
+        self.add_discrete_input('dnudxFunc', val=lambda x: x)
 
         self.add_output('corrected_L')
 
-    def compute(self, inputs, outputs, discrete_inputs=None, discrete_outputs=None):
+    def compute(self, inputs, outputs, discrete_inputs, discrete_outputs):
         pass
 
         # TODO: Implement correction of lift based on deflection
@@ -52,7 +53,7 @@ class SUHPAFlex(om.Group):
         # Attach analysis components to group.
         aeroSystem = self.add_subsystem('aeroSystem', Aero(),
                                         promotes_inputs=['b1', 'b2', 'b3', 'cr', 'ct'],
-                                        promotes_outputs=['clFunc', 'lFunc', 'S', 'L', 'D_wing'])
+                                        promotes_outputs=['lFunc', 'S', 'L', 'D_wing'])
 
         # Define the cycle between the cable sizer and the structural analysis (linked by cable radius, cable force)
         structuralCycle = self.add_subsystem('structCycle', om.Group(), promotes=['*'])
@@ -63,6 +64,7 @@ class SUHPAFlex(om.Group):
                                       promotes_inputs= ['cableForce', 'cablePosition'],
                                       promotes_outputs= ['cableRadius'])
         structuralCycle.nonlinear_solver = om.NonlinearBlockGS()  # Configure an appropriate solver for the cycle.
+        structuralCycle.set_order(['structSystem', 'cableSizer'])
 
         # Attach the rest of the components.
         cableDrag = self.add_subsystem('cableDrag', CableDrag(),
@@ -75,6 +77,8 @@ class SUHPAFlex(om.Group):
                                        promotes_inputs= ['D_wing', 'D_cable'],
                                        promotes_outputs= ['D_total'])
 
+        # Set component execution order
+        self.set_order(['designVars', 'aeroSystem', 'structCycle', 'cableDrag', 'liftCorrection', 'totalDrag'])
 
 
         # Add constraint functions

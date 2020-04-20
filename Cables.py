@@ -9,7 +9,7 @@ class CableSize(om.ExplicitComponent):
         self.add_input('cableForce')
         self.add_input('cablePosition')
 
-        self.add_output('cableRadius')
+        self.add_output('cableRadius', val=3E-3)
 
     def compute(self, inputs, outputs, discrete_inputs=None, discrete_outputs=None):
 
@@ -23,7 +23,7 @@ class CableDrag(om.ExplicitComponent):
 
     def setup(self):
 
-        self.add_input('cableRadius')
+        self.add_input('cableRadius', val=3E-3)
         self.add_input('cablePosition')
 
         self.add_output('D_cable')
