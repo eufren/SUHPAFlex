@@ -4,6 +4,7 @@ from Structures import Deflections
 from Cables import CableForce, CableDrag, CableSize
 import numpy as np
 import scipy.interpolate as scipl
+import LovelacePM as llpm
 
 
 class LiftDeflectionCorrection(om.ExplicitComponent):
@@ -100,49 +101,50 @@ class SUHPAFlex(om.Group):
         self.add_subsystem('rootThicknessConstraint', om.ExecComp('rootThickness = 0.14 * cr'), promotes=['*'])
         self.add_subsystem('tipThicknessConstraint', om.ExecComp('tipThickness = 0.11 * ct'), promotes=['*'])
 
-# Create optimisation problem
-prob = om.Problem()
-prob.model = SUHPAFlex()
+if llpm.multiprocess_guard():
+    # Create optimisation problem
+    prob = om.Problem()
+    prob.model = SUHPAFlex()
 
-# Configure problem driver
-prob.driver = om.ScipyOptimizeDriver()
-prob.driver.options['optimizer'] = 'COBYLA'
-prob.driver.options['maxiter'] = 100
-prob.driver.options['tol'] = 1e-8
+    # Configure problem driver
+    prob.driver = om.ScipyOptimizeDriver()
+    prob.driver.options['optimizer'] = 'COBYLA'
+    prob.driver.options['maxiter'] = 100
+    prob.driver.options['tol'] = 1e-8
 
-# Add design variables, constraints and objective
-prob.model.add_design_var('b1', lower=0.5, upper=12)
-prob.model.add_design_var('b2', lower=0.5, upper=12)
-prob.model.add_design_var('b3', lower=0.5, upper=12)
-prob.model.add_design_var('cr', lower=0.2, upper=2)
-prob.model.add_design_var('ct', lower=0.2, upper=2)
-prob.model.add_design_var('cablePosition', lower=0.1, upper=11)
+    # Add design variables, constraints and objective
+    prob.model.add_design_var('b1', lower=0.5, upper=12)
+    prob.model.add_design_var('b2', lower=0.5, upper=12)
+    prob.model.add_design_var('b3', lower=0.5, upper=12)
+    prob.model.add_design_var('cr', lower=0.2, upper=2)
+    prob.model.add_design_var('ct', lower=0.2, upper=2)
+    prob.model.add_design_var('cablePosition', lower=0.1, upper=11)
 
-prob.model.add_constraint('corrected_L', lower=1174, upper=1200)
-prob.model.add_constraint('span', lower=23.9, upper=24.1)
-prob.model.add_constraint('rootThickness', lower=0.1)
-prob.model.add_constraint('tipThickness', lower=0.03)
+    prob.model.add_constraint('corrected_L', lower=1174, upper=1200)
+    prob.model.add_constraint('span', lower=23.9, upper=24.1)
+    prob.model.add_constraint('rootThickness', lower=0.1)
+    prob.model.add_constraint('tipThickness', lower=0.03)
 
-prob.model.add_objective('D_total')
+    prob.model.add_objective('D_total')
 
-# Start the optimiser
-prob.setup()
+    # Start the optimiser
+    prob.setup()
 
-# prob.check_config()
+    # prob.check_config()
 
-prob.run_driver()
+    prob.run_driver()
 
-print("Optimised design variables:")
-print(prob['b1'])
-print(prob['b2'])
-print(prob['b3'])
-print(prob['cr'])
-print(prob['ct'])
-print(prob['cablePosition'])
+    print("Optimised design variables:")
+    print(prob['b1'])
+    print(prob['b2'])
+    print(prob['b3'])
+    print(prob['cr'])
+    print(prob['ct'])
+    print(prob['cablePosition'])
 
-print("Optimised lift, wing drag, cable drag and total drag:")
-print(prob['corrected_L'])
-print(prob['D_wing'])
-print(prob['D_cable'])
-print(prob['D_total'])
+    print("Optimised lift, wing drag, cable drag and total drag:")
+    print(prob['corrected_L'])
+    print(prob['D_wing'])
+    print(prob['D_cable'])
+    print(prob['D_total'])
 
